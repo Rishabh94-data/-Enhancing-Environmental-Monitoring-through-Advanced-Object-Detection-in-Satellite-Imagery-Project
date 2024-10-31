@@ -1,0 +1,320 @@
+# Install YOLOv8 using pip
+!pip install ultralytics==8.2.103 -q
+
+from IPython import display
+display.clear_output()
+
+import ultralytics
+ultralytics.checks()
+---------------------------------------------------------------------------------------------------------
+!pip install roboflow
+---------------------------------------------------------------------------------------------------------
+import roboflow
+import os
+from IPython.display import Image, display
+-----------------------------------------------------------------------------------------------------------
+# Log in to Roboflow
+roboflow.login()
+
+# Access the project
+rf = roboflow.Roboflow()
+project = rf.workspace("model-examples").project("football-players-obj-detection")
+dataset = project.version(2).download("yolov8")
+------------------------------------------------------------------------------------------------------------------
+# Define paths for images and labels
+train_dir = dataset.location + "/train/images"
+train_labels_dir = dataset.location + "/train/labels"
+test_dir = dataset.location + "/test/images"
+test_labels_dir = dataset.location + "/test/labels"
+
+# Ensure the directories exist
+os.makedirs(train_dir, exist_ok=True)
+os.makedirs(test_dir, exist_ok=True)
+---------------------------------------------------------------------------------------------------------------------
+# Count number of images in train and test directories
+num_train_images = len(os.listdir(train_dir))
+num_test_images = len(os.listdir(test_dir))
+
+print(f"Number of training images: {num_train_images}")
+print(f"Number of testing images: {num_test_images}")
+----------------------------------------------------------------------------------------------------------------------
+# Check the root dataset location
+dataset_root = dataset.location  # This is your base path for the dataset
+
+# Specify the annotations path if it's consolidated as annotations.csv in the dataset root
+annotations_path = os.path.join(dataset_root, 'annotations.csv')  # Modify if needed
+------------------------------------------------------------------------------------------------------------------------------
+import pandas as pd
+import glob
+----------------------------------------------------------------------------------------------------------------------------
+# List all label files in train and test directories
+label_files = glob.glob(train_labels_dir + "/*.txt") + glob.glob(test_labels_dir + "/*.txt")
+
+# Example: Read each label file and combine into a DataFrame
+annotations = pd.concat([pd.read_csv(file, sep=" ", header=None) for file in label_files], ignore_index=True)
+
+# Add column names based on YOLO format (modify if necessary)
+annotations.columns = ["class", "x_center", "y_center", "width", "height"]
+
+# Preview the DataFrame
+annotations.head()
+---------------------------------------------------------------------------------------------------------------------------------------
+# Step 1: Identify Unique Classes
+unique_classes = annotations['class'].unique()
+print(f"Unique Classes: {unique_classes}")
+--------------------------------------------------------------------------------------------------------------------------------------
+# Step 2: Count Instances of Each Class
+class_counts = annotations['class'].value_counts()
+print(f"Class Counts:\n{class_counts}")
+----------------------------------------------------------------------------------------------------------------------------------------------
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+-----------------------------------------------------------------------------------------------------------------------------------
+plt.figure(figsize=(10, 6))
+plt.bar(class_counts.index, class_counts.values, color='purple')
+plt.title('Distribution of Object Classes')
+plt.xlabel('Object Class')
+plt.ylabel('Number of Instances')
+plt.xticks(rotation=45)
+plt.show()
+-----------------------------------------------------------------------------------------------------------------------------------
+# Optional Step 4: Analyze Object Size
+# Calculate sizes (assuming width and height are normalized in the YOLO format)
+annotations['width'] = annotations['width'] * 640  # Assuming the image width is 640
+annotations['height'] = annotations['height'] * 480  # Assuming the image height is 480
+--------------------------------------------------------------------------------------------------------------------------------------
+# Visualize object sizes
+plt.figure(figsize=(10, 6))
+sns.histplot(annotations['width'], bins=30, color='blue', label='Width', kde=True)
+sns.histplot(annotations['height'], bins=30, color='red', label='Height', kde=True)
+plt.title('Distribution of Object Sizes')
+plt.xlabel('Size (pixels)')
+plt.ylabel('Frequency')
+plt.legend()
+plt.show()
+------------------------------------------------------------------------------------------------------------------------------------------
+!pip install albumentations opencv-python-headless torchvision -q
+----------------------------------------------------------------------------------------------------------------------------------------------
+import cv2
+import os
+
+# Example: Load an image from the dataset
+image_path = 'path/to/dataset/image.jpg'
+image = cv2.imread(image_path)
+-----------------------------------------------------------------------------------------------------------------------------------------------
+import cv2
+import os
+
+# Select an image from the training directory
+image_files = os.listdir(train_dir)  # List all files in the train directory
+
+# Ensure there is at least one image file in the directory
+if image_files:
+    image_path = os.path.join(train_dir, image_files[0])  # Use the first image file
+    print(f"Loading image: {image_path}")
+
+    # Load the image using OpenCV
+    image = cv2.imread(image_path)
+
+    # Check if the image was loaded correctly
+    if image is not None:
+        # Resize the image to 640x640
+        image_resized = cv2.resize(image, (640, 640))
+        print("Image resized successfully.")
+    else:
+        print("Failed to load the image. Please check the file format and path.")
+else:
+    print("No images found in the training directory.")
+-----------------------------------------------------------------------------------------------------------------------------------------------------
+# Step 3: Resize the image to 640x640
+image_resized = cv2.resize(image, (640, 640))
+----------------------------------------------------------------------------------------------------------------------------------------------
+# Step 4: Normalize pixel values to the range [0, 1]
+image_normalized = image_resized / 255.0
+-------------------------------------------------------------------------------------------------------------------------------------------------
+import albumentations as A
+
+# Step 5: Define augmentation transformations
+transform = A.Compose([
+    A.HorizontalFlip(p=0.5),  # Flip horizontally with a 50% chance
+    A.RandomBrightnessContrast(p=0.5),  # Adjust brightness and contrast
+    A.Rotate(limit=45, p=0.5)  # Rotate the image by ±45 degrees
+])
+
+# Apply augmentation to the image
+augmented = transform(image=image_normalized)['image']
+-----------------------------------------------------------------------------------------------------------------------------------------------
+# Step 6: Save the preprocessed image (if needed)
+cv2.imwrite('path/to/save/augmented_image.jpg', augmented * 255)
+-------------------------------------------------------------------------------------------------------------------------------------------------
+from ultralytics import YOLO
+
+# Step 2: Load the pre-trained YOLOv8 model (e.g., 'yolov8n.pt' for a nano model)
+model = YOLO('yolov8n.pt')
+--------------------------------------------------------------------------------------------------------------------------------------------
+# Step 3: Train the model on your football player dataset
+results = model.train(data=dataset.location + '/data.yaml', epochs=10, imgsz=640)
+------------------------------------------------------------------------------------------------------------------------------------------------
+# Step 4: Evaluate the model on the test data
+metrics = model.val()
+print(metrics)
+----------------------------------------------------------------------------------------------------------------------------------------------
+# Step 5: Use the model for inference on a new image
+import os
+from ultralytics import YOLO
+import matplotlib.pyplot as plt
+import cv2
+
+# Select a test image from the test directory
+test_image_files = os.listdir(test_dir)
+
+# Ensure there is at least one test image available
+if test_image_files:
+    # Use the first test image for inference
+    image_path = os.path.join(test_dir, test_image_files[0])
+    print(f"Running inference on: {image_path}")
+
+    # Run the model prediction (this returns a list of results)
+    results = model.predict(image_path)
+
+    # Process each result
+    for result in results:
+        # Convert the result to an image with bounding boxes and labels
+        result_img = result.plot()  # Draw bounding boxes, labels, etc. on the image
+
+        # Display the resulting image using Matplotlib
+        plt.imshow(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
+        plt.axis('off')  # Turn off axis labels
+        plt.show()
+else:
+    print("No images found in the test directory.")
+---------------------------------------------------------------------------------------------------------------------------------------------------
+# Step 1: Define hyperparameters
+hyperparameters = {
+    'lr0': 0.01,       # initial learning rate
+    'lrf': 0.1,        # final learning rate (multiplier)
+    'momentum': 0.937, # momentum factor
+    'weight_decay': 0.0005,  # weight decay
+    'epochs': 15,      # increase epochs for better learning
+}
+------------------------------------------------------------------------------------------------------------------------------------------------
+pip install pandas numpy keras
+--------------------------------------------------------------------------------------------------------------------------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+
+# Step 1: Get true labels and predicted labels
+# Assuming you have your test dataset's ground truth labels loaded in `true_labels`
+# And the predicted classes from the model in `predicted_classes`
+
+# Simulate example true and predicted labels (replace with actual values)
+true_labels = [0, 1, 2, 2, 1, 0, 3, 2, 1, 3]  # Example ground truth labels
+predicted_classes = [0, 1, 1, 2, 1, 0, 3, 2, 0, 3]  # Example predicted labels
+
+# Step 2: Calculate confusion matrix
+cm = confusion_matrix(true_labels, predicted_classes)
+
+# Step 3: Visualize the confusion matrix
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=True, xticklabels=['Ball', 'Goalkeeper', 'Player', 'Referee'], yticklabels=['Ball', 'Goalkeeper', 'Player', 'Referee'])
+plt.xlabel('Predicted Labels')
+plt.ylabel('True Labels')
+plt.title('Confusion Matrix')
+plt.show()
+-------------------------------------------------------------------------------------------------------------------------------------------------
+import numpy as np
+from sklearn.metrics import confusion_matrix
+
+# Step 1: Get true labels and predicted labels
+# Assuming you have your test dataset's ground truth labels loaded in `true_labels`
+# And the predicted classes from the model in `predicted_classes`
+
+# Simulated example true and predicted labels (replace with actual values)
+true_labels = [0, 1, 2, 2, 1, 0, 3, 2, 1, 3]  # Example ground truth labels
+predicted_classes = [0, 1, 1, 2, 1, 0, 3, 2, 0, 3]  # Example predicted labels
+
+# Step 2: Calculate confusion matrix
+cm = confusion_matrix(true_labels, predicted_classes)
+
+# Step 3: Print the confusion matrix
+print("Confusion Matrix:")
+print(cm)
+--------------------------------------------------------------------------------------------------------------------------------------------
+import numpy as np
+import pandas as pd
+
+# Define the confusion matrix
+confusion_matrix = np.array([[2, 0, 0, 0],
+                              [1, 2, 0, 0],
+                              [0, 1, 2, 0],
+                              [0, 0, 0, 2]])
+
+# Calculate True Positives (TP) for each class
+TP = np.diag(confusion_matrix)
+
+# Calculate False Positives (FP) and False Negatives (FN)
+FP = np.sum(confusion_matrix, axis=0) - TP  # Sum of each column - TP
+FN = np.sum(confusion_matrix, axis=1) - TP  # Sum of each row - TP
+
+# Calculate Accuracy, Precision, Recall, and F1-Score for each class
+accuracy_per_class = TP / np.sum(confusion_matrix, axis=1) * 100  # Class-wise accuracy in percentage
+overall_accuracy = np.sum(TP) / np.sum(confusion_matrix) * 100  # Overall accuracy in percentage
+
+# Create a DataFrame to display the results
+performance_metrics = pd.DataFrame({
+    'Class': [f'Class {i}' for i in range(len(TP))],
+    'Accuracy (%)': accuracy_per_class,
+    'TP': TP,
+    'FP': FP,
+    'FN': FN
+})
+
+# Print the performance metrics
+print(performance_metrics)
+print(f'\nOverall Accuracy: {overall_accuracy:.2f}%')
+----------------------------------------------------------------------------------------------------------------------------------------------
+import matplotlib.pyplot as plt
+import cv2
+import os
+
+# Function to visualize images with predictions
+def visualize_predictions(image_paths, predictions):
+    plt.figure(figsize=(15, 10))
+
+    for i, image_path in enumerate(image_paths):
+        image = cv2.imread(image_path)
+
+        # Get the prediction results for the current image
+        result = predictions[i]
+
+        # Extract the predicted bounding boxes and labels
+        for box in result.boxes:
+            x1, y1, x2, y2 = box.xyxy[0]  # Get the bounding box coordinates
+            conf = box.conf[0]  # Get the confidence score
+            cls = box.cls[0]  # Get the class index
+
+            # Draw the bounding box
+            cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+            # Add label to the bounding box
+            label = f'Class: {int(cls)}, Conf: {conf:.2f}'
+            cv2.putText(image, label, (int(x1), int(y1) - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+
+        plt.subplot(1, len(image_paths), i + 1)
+        plt.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        plt.axis('off')
+        plt.title(f"Prediction {i + 1}")
+
+    plt.show()
+
+# Example usage with test images and their predictions
+test_image_files = os.listdir(test_dir)[:5]  # First 5 test images
+image_paths = [os.path.join(test_dir, img) for img in test_image_files]
+
+# Run predictions for the selected images
+predictions = [model.predict(img)[0] for img in image_paths]  # Get predictions for these images
+
+visualize_predictions(image_paths, predictions)
+-----------------------------------------------------------------------------------------------------------------------------------------------------
